@@ -158,16 +158,23 @@ async function proxyRequest(
 
   // 缓存成功的响应(仅 GET/HEAD 且状态码为 200)
   // 关键修复：必须在调用 handleFinalResponse 之前处理缓存
-  // 因为 handleFinalResponse 会消费 targetResponse 的 body 流
+  // 因为 Response body 是流，只能被读取一次，需要先克隆
   if (isCacheable && cacheKey && targetResponse.status === 200) {
     try {
-      // 克隆原始响应以用于缓存，避免 body 流被消费后无法再次读取
-      const responseToCache = targetResponse.clone(); //new Response(targetResponse.body, targetResponse);
-      responseToCache.headers.set(
-        "Cache-Control",
-        `public, max-age=${CACHE_TTL}`,
-      );
-      responseToCache.headers.delete("Set-Cookie");
+      // 克隆响应用于缓存（clone() 会创建独立的 body 流）
+      const cachedResponse = targetResponse.clone();
+      
+      // 创建可变的 headers 副本
+      const cacheHeaders = new Headers(cachedResponse.headers);
+      cacheHeaders.set("Cache-Control", `public, max-age=${CACHE_TTL}`);
+      cacheHeaders.delete("Set-Cookie");
+      
+      // 创建新的响应对象用于缓存
+      const responseToCache = new Response(cachedResponse.body, {
+        status: cachedResponse.status,
+        statusText: cachedResponse.statusText,
+        headers: cacheHeaders,
+      });
 
       // 写入缓存
       await caches.default.put(cacheKey, responseToCache);
