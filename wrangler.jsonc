@@ -1,4 +1,6 @@
 {
+  "compatibility_date": "2026-04-13",
+  "main": "worker.js",
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
