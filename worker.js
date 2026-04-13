@@ -25,6 +25,7 @@ async function handleRequest(request) {
       request,
       "https://registry-1.docker.io/",
       "/v2/",
+      url.pathname,
     );
   }
 
@@ -67,7 +68,7 @@ async function handleRequest(request) {
   }
 
   // 4. 标准 V2 探测响应 (让 Docker 知道这是一个 Registry)
-  if (url.pathname === "/v2/" || url.pathname === "/v2") {
+  /*if (url.pathname === "/v2/" || url.pathname === "/v2") {
     return new Response("{}", {
       status: 200,
       headers: {
@@ -76,7 +77,7 @@ async function handleRequest(request) {
       },
     });
   }
-
+*/
   return new Response("Not Found", { status: 404 });
 }
 
