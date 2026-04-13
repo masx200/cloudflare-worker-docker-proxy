@@ -152,25 +152,30 @@ async function proxyRequest(
     }
   }
 
+  // 缓存成功的响应(仅 GET/HEAD 且状态码为 200)
+  // 关键修复：必须在调用 handleFinalResponse 之前处理缓存
+  // 因为 handleFinalResponse 会消费 targetResponse 的 body 流
+  if (isCacheable && cacheKey && targetResponse.status === 200) {
+    try {
+      // 克隆原始响应以用于缓存，避免 body 流被消费后无法再次读取
+      const responseToCache = new Response(targetResponse.body, targetResponse);
+      responseToCache.headers.set("Cache-Control", `public, max-age=${CACHE_TTL}`);
+      responseToCache.headers.delete("Set-Cookie");
+      
+      // 写入缓存
+      await caches.default.put(cacheKey, responseToCache);
+    } catch (cacheError) {
+      // 缓存失败不影响主流程
+      console.warn("Cache write failed:", cacheError);
+    }
+  }
+
   const finalResponse = handleFinalResponse(
     targetResponse,
     targetHost,
     pathPrefix,
     new URL(request.url).host,
   );
-
-  // 缓存成功的响应(仅 GET/HEAD 且状态码为 200)
-  if (isCacheable && cacheKey && finalResponse.status === 200) {
-    try {
-      const responseToCache = new Response(finalResponse.body, finalResponse);
-      responseToCache.headers.set("Cache-Control", `public, max-age=${CACHE_TTL}`);
-      responseToCache.headers.delete("Set-Cookie");
-      await caches.default.put(cacheKey, responseToCache);
-    } catch (cacheError) {
-      // 缓存失败不影响主流程(例如响应体已被消费)
-      console.warn("Cache write failed:", cacheError);
-    }
-  }
 
   return finalResponse;
 }
