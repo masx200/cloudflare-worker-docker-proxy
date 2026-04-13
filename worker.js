@@ -163,12 +163,12 @@ async function proxyRequest(
     try {
       // 克隆响应用于缓存（clone() 会创建独立的 body 流）
       const cachedResponse = targetResponse.clone();
-      
+
       // 创建可变的 headers 副本
       const cacheHeaders = new Headers(cachedResponse.headers);
       cacheHeaders.set("Cache-Control", `public, max-age=${CACHE_TTL}`);
       cacheHeaders.delete("Set-Cookie");
-      
+
       // 创建新的响应对象用于缓存
       const responseToCache = new Response(cachedResponse.body, {
         status: cachedResponse.status,
