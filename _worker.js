@@ -27,6 +27,13 @@ async function handleRequest(request) {
 
   if (targetPath.startsWith("/docker.io/")) {
     pathPrefix = "/docker.io/";
+    // 将 /docker.io/v2/... 转换为 /v2/... 格式
+    const remainingPath = targetPath.substring(pathPrefix.length);
+    if (remainingPath.startsWith("v2/")) {
+      targetPath = "/" + remainingPath;
+    } else {
+      targetPath = "/v2/" + remainingPath;
+    }
   } else if (targetPath.startsWith("/v2/docker.io/")) {
     // 重点：修复 Docker CLI 路径匹配
     pathPrefix = "/v2/docker.io/";
