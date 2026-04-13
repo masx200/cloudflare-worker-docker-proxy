@@ -1,3 +1,5 @@
+const CACHE_TTL = 3600; // 1小时缓存
+
 export default {
   async fetch(request) {
     return await handleRequest(request);
@@ -81,7 +83,7 @@ async function proxyRequest(
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("Host", targetUrl.host);
 
-  // 处理 Auth 路径直接转发
+  // 处理 Auth 路径直接转发(不缓存)
   if (pathPrefix === "/auth/") {
     const authRes = await fetch(targetUrl.toString(), {
       method: request.method,
@@ -91,11 +93,27 @@ async function proxyRequest(
     return new Response(authRes.body, authRes);
   }
 
+  // 判断是否可缓存(仅 GET/HEAD)
+  const isCacheable = request.method === "GET" || request.method === "HEAD";
+  
+  // 生成缓存键(使用目标 URL)
+  const cacheKey = isCacheable 
+    ? new Request(targetUrl.toString(), { method: "GET" })
+    : null;
+
+  // 尝试从缓存读取
+  if (isCacheable && cacheKey) {
+    const cachedResponse = await caches.default.match(cacheKey);
+    if (cachedResponse) {
+      return addCorsHeaders(cachedResponse);
+    }
+  }
+
   // 第一次尝试请求 Registry
   let targetResponse = await fetch(targetUrl.toString(), {
     method: request.method,
     headers: requestHeaders,
-    body: request.body,
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
     redirect: "follow",
   });
 
@@ -104,14 +122,13 @@ async function proxyRequest(
     const authHeader = targetResponse.headers.get("WWW-Authenticate");
     if (authHeader) {
       const authParams = parseAuthHeader(authHeader);
-      const currentHost = new URL(request.url).host;
 
       if (authParams.realm) {
-        // 直接使用 Docker 官方的 auth server 获取 Token，避免循环
+        // 直接使用 Docker 官方的 auth server 获取 Token,避免循环
         const tokenUrl =
           `${authParams.realm}?service=${authParams.service}&scope=${authParams.scope}`;
 
-        // Worker 代为获取 Token（直接请求官方 auth server）
+        // Worker 代为获取 Token(直接请求官方 auth server)
         const tokenRes = await fetch(tokenUrl, {
           headers: { "User-Agent": "docker/20.10.0 go/go1.13.15" },
         });
@@ -124,29 +141,45 @@ async function proxyRequest(
             // 携带新 Token 再次请求
             const retryHeaders = new Headers(requestHeaders);
             retryHeaders.set("Authorization", `Bearer ${token}`);
-            const retryResponse = await fetch(targetUrl.toString(), {
+            targetResponse = await fetch(targetUrl.toString(), {
               method: request.method,
               headers: retryHeaders,
-              body: request.body,
+              body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
             });
-            return handleFinalResponse(
-              retryResponse,
-              targetHost,
-              pathPrefix,
-              currentHost,
-            );
           }
         }
       }
     }
   }
 
-  return handleFinalResponse(
+  const finalResponse = handleFinalResponse(
     targetResponse,
     targetHost,
     pathPrefix,
     new URL(request.url).host,
   );
+
+  // 缓存成功的响应(仅 GET/HEAD 且状态码为 200)
+  if (isCacheable && cacheKey && finalResponse.status === 200) {
+    try {
+      const responseToCache = new Response(finalResponse.body, finalResponse);
+      responseToCache.headers.set("Cache-Control", `public, max-age=${CACHE_TTL}`);
+      responseToCache.headers.delete("Set-Cookie");
+      await caches.default.put(cacheKey, responseToCache);
+    } catch (cacheError) {
+      // 缓存失败不影响主流程(例如响应体已被消费)
+      console.warn("Cache write failed:", cacheError);
+    }
+  }
+
+  return finalResponse;
+}
+
+// 为缓存响应添加 CORS 头
+function addCorsHeaders(response) {
+  const newResponse = new Response(response.body, response);
+  newResponse.headers.set("Access-Control-Allow-Origin", "*");
+  return newResponse;
 }
 
 // 处理最终响应，修复 Location 和跨域
