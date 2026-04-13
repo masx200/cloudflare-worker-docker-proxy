@@ -64,13 +64,13 @@ async function proxyUpstreamBlob(request) {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("Host", upstreamHost);
   // 删除可能干扰的上游代理头
-  requestHeaders.delete("CF-Connecting-IP");
-  requestHeaders.delete("CF-IPCountry");
-  requestHeaders.delete("CF-Ray");
-  requestHeaders.delete("CF-Visitor");
-  requestHeaders.delete("X-Forwarded-For");
-  requestHeaders.delete("X-Forwarded-Proto");
-  requestHeaders.delete("X-Real-IP");
+  // requestHeaders.delete("CF-Connecting-IP");
+  // requestHeaders.delete("CF-IPCountry");
+  // requestHeaders.delete("CF-Ray");
+  // requestHeaders.delete("CF-Visitor");
+  // requestHeaders.delete("X-Forwarded-For");
+  // requestHeaders.delete("X-Forwarded-Proto");
+  // requestHeaders.delete("X-Real-IP");
 
   let upstreamResponse = await fetch(targetUrl, {
     method: request.method,
