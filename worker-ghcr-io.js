@@ -57,6 +57,13 @@ async function proxyUpstreamBlob(request) {
   }
 
   const upstreamHost = rest.substring(0, slashIndex);
+  
+  // 安全检查：只允许 PROXY_DOMAINS 白名单中的域名
+  if (!PROXY_DOMAINS.includes(upstreamHost)) {
+    console.warn(`Blocked unauthorized upstream host: ${upstreamHost}`);
+    return new Response("Unauthorized upstream host", { status: 403 });
+  }
+  
   const upstreamPath = rest.substring(slashIndex);
   const targetUrl = `https://${upstreamHost}${upstreamPath}${url.search}`;
 
