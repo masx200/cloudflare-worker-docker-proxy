@@ -109,7 +109,8 @@ async function proxyRequest(
 
       if (authParams.realm) {
         // 直接使用 Docker 官方的 auth server 获取 Token，避免循环
-        const tokenUrl = `${authParams.realm}?service=${authParams.service}&scope=${authParams.scope}`;
+        const tokenUrl =
+          `${authParams.realm}?service=${authParams.service}&scope=${authParams.scope}`;
 
         // Worker 代为获取 Token（直接请求官方 auth server）
         const tokenRes = await fetch(tokenUrl, {

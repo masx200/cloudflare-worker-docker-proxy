@@ -1,6 +1,7 @@
 # Docker Proxy Worker
 
-一个基于 Cloudflare Workers 的 Docker Registry / Auth 代理服务，用于转发 Docker 相关请求，并处理认证、重定向和路径兼容问题。
+一个基于 Cloudflare Workers 的 Docker Registry / Auth 代理服务，用于转发 Docker
+相关请求，并处理认证、重定向和路径兼容问题。
 
 ## 功能特性
 
@@ -15,6 +16,7 @@
 ## 路由说明
 
 ### 1. 首页
+
 访问 `/` 时，返回：
 
 ```text
@@ -22,6 +24,7 @@ Docker Proxy is Running
 ```
 
 ### 2. Auth 代理
+
 所有以 `/auth/` 开头的请求，会转发到：
 
 ```text
@@ -29,6 +32,7 @@ https://auth.docker.io/
 ```
 
 ### 3. Docker Registry 代理
+
 支持以下两种路径：
 
 - `/docker.io/v2/...`
@@ -41,7 +45,9 @@ https://registry-1.docker.io/
 ```
 
 ### 4. Registry 探测
-访问 `/v2/` 或 `/v2` 时，返回标准 Docker Registry 探测响应，便于 Docker 客户端识别该服务。
+
+访问 `/v2/` 或 `/v2` 时，返回标准 Docker Registry 探测响应，便于 Docker
+客户端识别该服务。
 
 ## 工作原理
 
