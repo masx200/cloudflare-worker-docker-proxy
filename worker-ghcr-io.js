@@ -2,6 +2,16 @@
 const TARGET_REGISTRY = "https://ghcr.io";
 const CACHE_TTL = 3600; // 1小时缓存
 
+// 需要透传代理的外部域名（GHCR blob 下载会重定向到这些域名）
+const PROXY_DOMAINS = [
+  "pkg-containers.githubusercontent.com",
+  "containers.githubusercontent.com",
+  "productionresultssa.blob.core.windows.net",
+  "codeload.github.com",
+  "github.com",
+  "objects.githubusercontent.com",
+];
+
 export default {
   async fetch(request, env, ctx) {
     return await handleRequest(request);
@@ -18,7 +28,6 @@ async function handleRequest(request) {
   }
 
   // 2. 处理认证 Token 请求 (docker login 或 pull 时的获取 token 阶段)
-  // GHCR 的认证路径通常是 /token
   if (url.pathname === "/token" || url.pathname === "/v2/token") {
     return proxyRequest(request, TARGET_REGISTRY, "");
   }
@@ -28,11 +37,60 @@ async function handleRequest(request) {
     return proxyRequest(request, TARGET_REGISTRY, "");
   }
 
+  // 4. 处理透传代理的外部 blob 下载请求
+  // URL 格式: /__proxy_upstream/<encoded upstream host>/<path>
+  if (url.pathname.startsWith("/__proxy_upstream/")) {
+    return proxyUpstreamBlob(request);
+  }
+
   return new Response("Not Found", { status: 404 });
+}
+
+// 处理透传的 blob 下载
+async function proxyUpstreamBlob(request) {
+  const url = new URL(request.url);
+
+  // 解析路径: /__proxy_upstream/<host>/<remaining path>
+  const rest = url.pathname.substring("/__proxy_upstream/".length);
+  const slashIndex = rest.indexOf("/");
+  if (slashIndex === -1) {
+    return new Response("Invalid proxy path", { status: 400 });
+  }
+
+  const upstreamHost = rest.substring(0, slashIndex);
+  const upstreamPath = rest.substring(slashIndex);
+  const targetUrl = `https://${upstreamHost}${upstreamPath}${url.search}`;
+
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("Host", upstreamHost);
+  // 删除可能干扰的上游代理头
+  requestHeaders.delete("CF-Connecting-IP");
+  requestHeaders.delete("CF-IPCountry");
+  requestHeaders.delete("CF-Ray");
+  requestHeaders.delete("CF-Visitor");
+  requestHeaders.delete("X-Forwarded-For");
+  requestHeaders.delete("X-Forwarded-Proto");
+  requestHeaders.delete("X-Real-IP");
+
+  let upstreamResponse = await fetch(targetUrl, {
+    method: request.method,
+    headers: requestHeaders,
+    redirect: "follow",
+  });
+
+  const responseHeaders = new Headers(upstreamResponse.headers);
+  responseHeaders.set("Access-Control-Allow-Origin", "*");
+
+  return new Response(upstreamResponse.body, {
+    status: upstreamResponse.status,
+    statusText: upstreamResponse.statusText,
+    headers: responseHeaders,
+  });
 }
 
 async function proxyRequest(request, targetHost, pathPrefix) {
   const url = new URL(request.url);
+  const currentHost = url.host;
   const actualPath = url.pathname;
   const targetUrl = new URL(targetHost + actualPath + url.search);
 
@@ -67,58 +125,84 @@ async function proxyRequest(request, targetHost, pathPrefix) {
     redirect: "manual", // 手动处理重定向以修复 Location
   });
 
-  // 构造响应
-  let responseHeaders = new Headers(targetResponse.headers);
-
   // --- 核心修复：重写 WWW-Authenticate 响应头 ---
   // 当 Registry 返回 401 时，它会告诉客户端去哪里拿 Token。
   // 我们需要把那个地址改成本 Proxy 的地址。
-  const authHeader = responseHeaders.get("WWW-Authenticate");
+  const authHeader = targetResponse.headers.get("WWW-Authenticate");
   if (authHeader && targetResponse.status === 401) {
     const rewrittenAuth = authHeader.replace(
       /realm="https:\/\/ghcr.io\/token"/g,
-      `realm="https://${new URL(request.url).host}/token"`,
+      `realm="https://${currentHost}/token"`,
     );
+    const responseHeaders = new Headers(targetResponse.headers);
     responseHeaders.set("WWW-Authenticate", rewrittenAuth);
+    responseHeaders.set("Access-Control-Allow-Origin", "*");
+    return new Response(targetResponse.body, {
+      status: targetResponse.status,
+      statusText: targetResponse.statusText,
+      headers: responseHeaders,
+    });
   }
 
-  // --- 核心修复：重写 Location 响应头 (处理 302 重定向) ---
-  let location = responseHeaders.get("Location");
-  if (location) {
-    const targetHostName = new URL(targetHost).host;
-    if (location.includes(targetHostName)) {
-      location = location.replace(targetHostName, new URL(request.url).host);
-      responseHeaders.set("Location", location);
+  // --- 核心修复：重写 307 Location 为经过本代理的路径 ---
+  // GHCR 的 blob 下载返回 307 重定向到 pkg-containers.githubusercontent.com
+  // Docker 客户端直接访问该外部域名会被重置，需要通过 Worker 代理下载
+  if ([301, 302, 303, 307, 308].includes(targetResponse.status)) {
+    let location = targetResponse.headers.get("Location");
+    if (location) {
+      try {
+        const locationUrl = new URL(location);
+        // 检查是否是需要代理的外部域名
+        if (PROXY_DOMAINS.includes(locationUrl.host)) {
+          // 将外部 URL 改写为通过本代理的路径
+          const proxyPath = `/__proxy_upstream/${locationUrl.host}${locationUrl.pathname}${locationUrl.search}`;
+          const responseHeaders = new Headers(targetResponse.headers);
+          responseHeaders.set("Location", `https://${currentHost}${proxyPath}`);
+          responseHeaders.set("Access-Control-Allow-Origin", "*");
+          return new Response(null, {
+            status: targetResponse.status,
+            statusText: targetResponse.statusText,
+            headers: responseHeaders,
+          });
+        }
+        // 普通 ghcr.io 域名重定向
+        const targetHostName = new URL(targetHost).host;
+        if (location.includes(targetHostName)) {
+          location = location.replace(targetHostName, currentHost);
+          const responseHeaders = new Headers(targetResponse.headers);
+          responseHeaders.set("Location", location);
+          responseHeaders.set("Access-Control-Allow-Origin", "*");
+          return new Response(null, {
+            status: targetResponse.status,
+            statusText: targetResponse.statusText,
+            headers: responseHeaders,
+          });
+        }
+      } catch (e) {
+        // location URL 解析失败，原样返回
+        console.warn("Failed to parse redirect Location:", location, e);
+      }
     }
   }
 
-  // 添加跨域
+  // 构造响应
+  let responseHeaders = new Headers(targetResponse.headers);
   responseHeaders.set("Access-Control-Allow-Origin", "*");
 
   // 缓存成功的响应(仅 GET/HEAD 且状态码为 200)
-  // 关键修复：必须在创建最终响应之前处理缓存
-  // 因为 Response body 是流，只能被读取一次，需要先克隆
   if (isCacheable && cacheKey && targetResponse.status === 200) {
     try {
-      // 克隆响应用于缓存（clone() 会创建独立的 body 流）
       const cachedResponse = targetResponse.clone();
-
-      // 创建可变的 headers 副本
       const cacheHeaders = new Headers(cachedResponse.headers);
       cacheHeaders.set("Cache-Control", `public, max-age=${CACHE_TTL}`);
       cacheHeaders.delete("Set-Cookie");
-
-      // 创建新的响应对象用于缓存
       const responseToCache = new Response(cachedResponse.body, {
         status: cachedResponse.status,
         statusText: cachedResponse.statusText,
         headers: cacheHeaders,
       });
-
-      // 写入缓存
       await caches.default.put(cacheKey, responseToCache);
     } catch (cacheError) {
-      // 缓存失败不影响主流程
       console.warn("Cache write failed:", cacheError);
     }
   }
