@@ -13,14 +13,13 @@ const PROXY_DOMAINS = [
 ];
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request) {
     return await handleRequest(request);
   },
 };
 
 async function handleRequest(request) {
   const url = new URL(request.url);
-  const currentHost = url.host;
 
   // 1. 首页测试
   if (url.pathname === "/") {
@@ -155,7 +154,8 @@ async function proxyRequest(request, targetHost, pathPrefix) {
         // 检查是否是需要代理的外部域名
         if (PROXY_DOMAINS.includes(locationUrl.host)) {
           // 将外部 URL 改写为通过本代理的路径
-          const proxyPath = `/__proxy_upstream/${locationUrl.host}${locationUrl.pathname}${locationUrl.search}`;
+          const proxyPath =
+            `/__proxy_upstream/${locationUrl.host}${locationUrl.pathname}${locationUrl.search}`;
           const responseHeaders = new Headers(targetResponse.headers);
           responseHeaders.set("Location", `https://${currentHost}${proxyPath}`);
           responseHeaders.set("Access-Control-Allow-Origin", "*");
