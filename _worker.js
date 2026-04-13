@@ -39,7 +39,7 @@ async function handleRequest(request) {
       request,
       "https://registry-1.docker.io/",
       pathPrefix,
-      targetPath
+      targetPath,
     );
   }
 
@@ -57,10 +57,20 @@ async function handleRequest(request) {
   return new Response("Not Found", { status: 404 });
 }
 
-async function proxyRequest(request, targetHost, pathPrefix, customPath = null) {
+async function proxyRequest(
+  request,
+  targetHost,
+  pathPrefix,
+  customPath = null,
+) {
   const url = new URL(request.url);
   const actualPath = customPath || url.pathname.substring(pathPrefix.length);
-  const targetUrl = new URL(targetHost.replace(/\/$/, "") + "/" + actualPath.replace(/^\//, "") + url.search);
+  const targetUrl = new URL(
+    targetHost.replace(/\/$/, "") +
+      "/" +
+      actualPath.replace(/^\//, "") +
+      url.search,
+  );
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("Host", targetUrl.host);
@@ -80,7 +90,7 @@ async function proxyRequest(request, targetHost, pathPrefix, customPath = null) 
     method: request.method,
     headers: requestHeaders,
     body: request.body,
-    redirect: "follow"
+    redirect: "follow",
   });
 
   // 如果需要认证
@@ -88,22 +98,25 @@ async function proxyRequest(request, targetHost, pathPrefix, customPath = null) 
     const authHeader = targetResponse.headers.get("WWW-Authenticate");
     if (authHeader) {
       const authParams = parseAuthHeader(authHeader);
-      
+
       if (authParams.realm) {
         // 将认证地址指向我们自己的 /auth 代理，并动态替换域名
         const currentHost = new URL(request.url).host;
-        const newRealm = authParams.realm.replace("https://auth.docker.io", `https://${currentHost}/auth`);
+        const newRealm = authParams.realm.replace(
+          "https://auth.docker.io",
+          `https://${currentHost}/auth`,
+        );
         const tokenUrl = `${newRealm}?service=${authParams.service}&scope=${authParams.scope}`;
 
         // Worker 代为获取 Token
         const tokenRes = await fetch(tokenUrl, {
-          headers: { "User-Agent": "docker/20.10.0 go/go1.13.15" }
+          headers: { "User-Agent": "docker/20.10.0 go/go1.13.15" },
         });
 
         if (tokenRes.ok) {
           const tokenData = await tokenRes.json();
           const token = tokenData.token || tokenData.access_token;
-          
+
           if (token) {
             // 携带新 Token 再次请求
             const retryHeaders = new Headers(requestHeaders);
@@ -113,28 +126,41 @@ async function proxyRequest(request, targetHost, pathPrefix, customPath = null) 
               headers: retryHeaders,
               body: request.body,
             });
-            return handleFinalResponse(retryResponse, targetHost, pathPrefix, currentHost);
+            return handleFinalResponse(
+              retryResponse,
+              targetHost,
+              pathPrefix,
+              currentHost,
+            );
           }
         }
       }
     }
   }
 
-  return handleFinalResponse(targetResponse, targetHost, pathPrefix, new URL(request.url).host);
+  return handleFinalResponse(
+    targetResponse,
+    targetHost,
+    pathPrefix,
+    new URL(request.url).host,
+  );
 }
 
 // 处理最终响应，修复 Location 和跨域
 function handleFinalResponse(response, targetHost, pathPrefix, currentHost) {
   const newResponse = new Response(response.body, response);
   newResponse.headers.set("Access-Control-Allow-Origin", "*");
-  
+
   // 修复重定向地址
   let location = newResponse.headers.get("Location");
   if (location && location.includes(new URL(targetHost).host)) {
-    location = location.replace(new URL(targetHost).host, currentHost + pathPrefix.replace(/\/$/, ""));
+    location = location.replace(
+      new URL(targetHost).host,
+      currentHost + pathPrefix.replace(/\/$/, ""),
+    );
     newResponse.headers.set("Location", location);
   }
-  
+
   return newResponse;
 }
 
