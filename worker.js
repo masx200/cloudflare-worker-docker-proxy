@@ -1,12 +1,11 @@
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request) {
     return await handleRequest(request);
   },
 };
 
 async function handleRequest(request) {
   const url = new URL(request.url);
-  const host = url.host; // 动态获取当前域名
 
   // 1. 首页
   if (url.pathname === "/") {
