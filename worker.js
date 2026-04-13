@@ -20,9 +20,10 @@ async function handleRequest(request) {
   }
 
   // 3. Docker Registry 代理
-  // 兼容两种路径：
-  // - 直接访问: /docker.io/v2/...
-  // - Docker CLI 访问: /v2/docker.io/...
+  // 兼容多种路径格式：
+  // - /docker.io/v2/... (显式指定 docker.io)
+  // - /v2/docker.io/... (Docker CLI 格式)
+  // - /v2/... (默认使用 docker.io)
   let targetPath = url.pathname;
   let pathPrefix = "";
 
@@ -40,6 +41,11 @@ async function handleRequest(request) {
     pathPrefix = "/v2/docker.io/";
     // 将路径重定向为标准的 /v2/ 格式发给 Docker 官方
     targetPath = "/v2/" + targetPath.substring(pathPrefix.length);
+  } else if (targetPath.startsWith("/v2/")) {
+    // 新增：处理不带 docker.io 的 /v2/ 请求，默认使用 docker.io
+    pathPrefix = "/v2/";
+    // 直接使用原有路径，因为已经是 /v2/ 格式
+    targetPath = url.pathname;
   }
 
   if (pathPrefix) {
