@@ -1,5 +1,5 @@
 const CACHE_TTL = 3600; // 1小时缓存
-
+const TARGET_REGISTRY = "https://auth.docker.io/";
 export default {
   async fetch(request) {
     return await handleRequest(request);
@@ -13,7 +13,9 @@ async function handleRequest(request) {
   if (url.pathname === "/") {
     return new Response("Docker Proxy is Running", { status: 200 });
   }
-
+  if (url.pathname === "/token") {
+    return proxyRequest(request, TARGET_REGISTRY, "");
+  }
   // 2. 认证服务器代理 (Auth)
   if (url.pathname.startsWith("/auth/")) {
     return proxyRequest(request, "https://auth.docker.io/", "/auth/");

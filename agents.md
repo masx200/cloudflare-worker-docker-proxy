@@ -31,7 +31,7 @@ handling:
 
 ### GHCR Proxy (`worker-ghcr-io.js`)
 
-- Proxies `/token` and `/v2/token` → `ghcr.io/token`
+- Proxies `/token` → `ghcr.io/token`
 - Proxies `/v2/*` → `ghcr.io`
 - **Client-side authentication**: Passes through user's Basic Auth / Bearer
   token to upstream; rewrites `WWW-Authenticate` realm to point back to proxy
