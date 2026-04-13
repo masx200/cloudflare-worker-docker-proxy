@@ -21,7 +21,11 @@ async function handleRequest(request) {
     return proxyRequest(request, "https://auth.docker.io/", "/auth/");
   }
   if (url.pathname.startsWith("/v2/")) {
-    return proxyRequestforlogin(request, "https://docker.io/", "/v2/");
+    return proxyRequestforlogin(
+      request,
+      "https://registry-1.docker.io/",
+      "/v2/",
+    );
   }
 
   // 3. Docker Registry 代理
