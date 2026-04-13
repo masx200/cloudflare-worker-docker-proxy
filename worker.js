@@ -20,6 +20,9 @@ async function handleRequest(request) {
   if (url.pathname.startsWith("/auth/")) {
     return proxyRequest(request, "https://auth.docker.io/", "/auth/");
   }
+  if (url.pathname.startsWith("/v2/")) {
+    return proxyRequestforlogin(request, "https://docker.io/", "/v2/");
+  }
 
   // 3. Docker Registry 代理
   // 兼容多种路径格式：
@@ -237,4 +240,70 @@ function parseAuthHeader(header) {
     params[match[1]] = match[2];
   }
   return params;
+}
+
+async function proxyRequestforlogin(
+  request,
+  targetHost,
+  pathPrefix,
+  customPath = null,
+) {
+  const url = new URL(request.url);
+  const actualPath = customPath || url.pathname.substring(pathPrefix.length);
+  const targetUrl = new URL(
+    targetHost.replace(/\/$/, "") +
+      "/" +
+      actualPath.replace(/^\//, "") +
+      url.search,
+  );
+
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("Host", targetUrl.host);
+
+  // 第一次尝试请求 Registry
+  let targetResponse = await fetch(targetUrl.toString(), {
+    method: request.method,
+    headers: requestHeaders,
+    body: request.method === "GET" || request.method === "HEAD"
+      ? undefined
+      : request.body,
+    redirect: "follow",
+  });
+
+  // 如果需要认证，修改 WWW-Authenticate 指向代理自身，让 Docker 客户端走代理认证
+  if (targetResponse.status === 401) {
+    const authHeader = targetResponse.headers.get("WWW-Authenticate");
+    if (authHeader) {
+      const authParams = parseAuthHeader(authHeader);
+
+      if (authParams.realm) {
+        // 将 realm 指向代理自身的 /auth/token 端点，让 Docker 客户端自行走认证流程
+        const currentHost = new URL(request.url).host;
+        const proxyRealm = `https://${currentHost}/auth/token`;
+        const newAuthHeader =
+          `Bearer realm="${proxyRealm}",service="${authParams.service}"${
+            authParams.scope ? `,scope="${authParams.scope}"` : ""
+          }`;
+
+        // 返回修改后的 401 响应，Docker 客户端会根据 WWW-Authenticate 去代理获取 token
+        const authResponse = new Response(targetResponse.body, {
+          status: 401,
+          statusText: targetResponse.statusText,
+          headers: targetResponse.headers,
+        });
+        authResponse.headers.set("WWW-Authenticate", newAuthHeader);
+        authResponse.headers.set("Access-Control-Allow-Origin", "*");
+        return authResponse;
+      }
+    }
+  }
+
+  const finalResponse = handleFinalResponse(
+    targetResponse,
+    targetHost,
+    pathPrefix,
+    new URL(request.url).host,
+  );
+
+  return finalResponse;
 }
