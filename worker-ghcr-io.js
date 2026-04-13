@@ -111,7 +111,9 @@ async function proxyRequest(request, targetHost, pathPrefix) {
   if (isCacheable && cacheKey) {
     const cachedResponse = await caches.default.match(cacheKey);
     if (cachedResponse) {
-      return addCorsHeaders(cachedResponse);
+      // HEAD 请求命中缓存：传 null body，但保留所有 Headers（尤其是 Content-Length）
+      const isHead = request.method === "HEAD";
+      return addCorsHeaders(cachedResponse, isHead);
     }
   }
 
@@ -128,6 +130,7 @@ async function proxyRequest(request, targetHost, pathPrefix) {
   // 当 Registry 返回 401 时，它会告诉客户端去哪里拿 Token。
   // 我们需要把那个地址改成本 Proxy 的地址。
   const authHeader = targetResponse.headers.get("WWW-Authenticate");
+  const isHead = request.method === "HEAD";
   if (authHeader && targetResponse.status === 401) {
     const rewrittenAuth = authHeader.replace(
       /realm="https:\/\/ghcr.io\/token"/g,
@@ -136,7 +139,7 @@ async function proxyRequest(request, targetHost, pathPrefix) {
     const responseHeaders = new Headers(targetResponse.headers);
     responseHeaders.set("WWW-Authenticate", rewrittenAuth);
     responseHeaders.set("Access-Control-Allow-Origin", "*");
-    return new Response(targetResponse.body, {
+    return new Response(isHead ? null : targetResponse.body, {
       status: targetResponse.status,
       statusText: targetResponse.statusText,
       headers: responseHeaders,
@@ -189,8 +192,9 @@ async function proxyRequest(request, targetHost, pathPrefix) {
   let responseHeaders = new Headers(targetResponse.headers);
   responseHeaders.set("Access-Control-Allow-Origin", "*");
 
-  // 缓存成功的响应(仅 GET/HEAD 且状态码为 200)
-  if (isCacheable && cacheKey && targetResponse.status === 200) {
+  // 缓存成功的响应(仅 GET 且状态码为 200)
+  // 注意：不缓存 HEAD 响应，因为 HEAD 没有 body，写入缓存会导致后续 GET 也拿到空数据
+  if (request.method === "GET" && cacheKey && targetResponse.status === 200) {
     try {
       const cachedResponse = targetResponse.clone();
       const cacheHeaders = new Headers(cachedResponse.headers);
@@ -207,15 +211,20 @@ async function proxyRequest(request, targetHost, pathPrefix) {
     }
   }
 
-  return new Response(targetResponse.body, {
+  return new Response(isHead ? null : targetResponse.body, {
     status: targetResponse.status,
+    statusText: targetResponse.statusText,
     headers: responseHeaders,
   });
 }
 
-// 为缓存响应添加 CORS 头
-function addCorsHeaders(response) {
-  const newResponse = new Response(response.body, response);
-  newResponse.headers.set("Access-Control-Allow-Origin", "*");
-  return newResponse;
+// 为缓存响应添加 CORS 头，HEAD 请求时传 null body 以保留 Content-Length 等 Headers
+function addCorsHeaders(response, isHead = false) {
+  const responseHeaders = new Headers(response.headers);
+  responseHeaders.set("Access-Control-Allow-Origin", "*");
+  return new Response(isHead ? null : response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: responseHeaders,
+  });
 }
