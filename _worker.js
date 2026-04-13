@@ -105,6 +105,7 @@ async function proxyRequest(
     const authHeader = targetResponse.headers.get("WWW-Authenticate");
     if (authHeader) {
       const authParams = parseAuthHeader(authHeader);
+      const currentHost = new URL(request.url).host;
 
       if (authParams.realm) {
         // 直接使用 Docker 官方的 auth server 获取 Token，避免循环
