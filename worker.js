@@ -32,48 +32,90 @@ async function proxyRequest(request, targetHost, pathPrefix) {
   const url = new URL(request.url);
   const targetUrl = new URL(targetHost + url.pathname.substring(pathPrefix.length) + url.search);
 
-  // Docker Registry V2 认证处理：如果 registry 返回 401，重定向到 auth
+  // 对于auth路径，直接代理（添加Authorization转发）
+  if (pathPrefix === '/auth/') {
+    const targetResponse = await fetch(targetUrl.toString(), {
+      method: request.method,
+      headers: {
+        ...request.headers,  // 转发client的Authorization (docker login)
+        'Host': new URL(targetHost).host,
+      },
+      body: request.body,
+    });
+    const response = new Response(targetResponse.body, targetResponse);
+    response.headers.set('Access-Control-Allow-Origin', '*');
+    copyHeaders(targetResponse.headers, response.headers, ['Content-Type']);
+    return response;
+  }
+
+  // 对于registry路径，先检查是否需要auth（manifest/blob）
   const targetResponse = await fetch(targetUrl.toString(), {
     method: request.method,
     headers: {
       ...request.headers,
       'Host': new URL(targetHost).host,
-      // Docker API 版本头
       'Docker-Distribution-Api-Version': 'registry/2.0',
     },
     body: request.body,
   });
 
-  // 处理 401：解析 WWW-Authenticate，返回 auth 重定向
   if (targetResponse.status === 401) {
     const authHeader = targetResponse.headers.get('WWW-Authenticate');
     if (authHeader) {
       const authParams = parseAuthHeader(authHeader);
-      if (authParams.realm && authParams.service) {
-        // 构建 auth URL，使用代理的 /auth/ 路径
+      if (authParams.realm && authParams.service && authParams.scope) {
+        // 直接调用auth API获取token（匿名pull）
         const authRealm = authParams.realm.replace('https://auth.docker.io', 'https://dhlr51os0a.masx200.ddns-ip.net/auth');
-        const authUrl = `${authRealm}?service=${authParams.service}&scope=${authParams.scope || ''}`;
-        return Response.redirect(authUrl, 302);
+        const tokenUrl = `${authRealm}?service=${authParams.service}&scope=${authParams.scope}`;
+        
+        // Worker fetch token（Docker客户端看不到此步骤）
+        const tokenResponse = await fetch(tokenUrl, {
+          headers: {
+            'Host': 'dhlr51os0a.masx200.ddns-ip.net',  // 匹配你的域名
+            'User-Agent': 'docker/20.10.0 go/go1.13.15',  // 模拟Docker
+          },
+        });
+        
+        if (tokenResponse.ok) {
+          const tokenData = await tokenResponse.json();
+          const token = tokenData.token || `Bearer ${tokenData.token}`;
+
+          // 重试target请求，带token
+          const retryResponse = await fetch(targetUrl.toString(), {
+            method: request.method,
+            headers: {
+              ...request.headers,
+              'Host': new URL(targetHost).host,
+              'Docker-Distribution-Api-Version': 'registry/2.0',
+              'Authorization': token,
+            },
+            body: request.body,
+          });
+
+          const response = new Response(retryResponse.body, retryResponse);
+          response.headers.set('Access-Control-Allow-Origin', '*');
+          copyHeaders(retryResponse.headers, response.headers, [
+            'Content-Type', 'Content-Length', 'Docker-Content-Digest'
+          ]);
+          return response;
+        }
       }
     }
+    // fallback 401
+    return targetResponse;
   }
 
-  // 其他响应：复制头、body、状态
+  // 正常响应处理（同原代码）
   const response = new Response(targetResponse.body, targetResponse);
   response.headers.set('Access-Control-Allow-Origin', '*');
-
-  // 复制关键头，但修正 Location 等为代理路径
   copyHeaders(targetResponse.headers, response.headers, [
     'Content-Type', 'Content-Length', 'Docker-Content-Digest', 'Docker-Distribution-Api-Version'
   ]);
-
-  // 修正 Location 头（如果有重定向）
   let location = response.headers.get('Location');
   if (location) {
     location = location.replace(targetHost, `https://dhlr51os0a.masx200.ddns-ip.net${pathPrefix}`);
     response.headers.set('Location', location);
   }
-
   return response;
 }
 
