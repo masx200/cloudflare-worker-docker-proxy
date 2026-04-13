@@ -95,9 +95,9 @@ async function proxyRequest(
 
   // 判断是否可缓存(仅 GET/HEAD)
   const isCacheable = request.method === "GET" || request.method === "HEAD";
-  
+
   // 生成缓存键(使用目标 URL)
-  const cacheKey = isCacheable 
+  const cacheKey = isCacheable
     ? new Request(targetUrl.toString(), { method: "GET" })
     : null;
 
@@ -113,7 +113,9 @@ async function proxyRequest(
   let targetResponse = await fetch(targetUrl.toString(), {
     method: request.method,
     headers: requestHeaders,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+    body: request.method === "GET" || request.method === "HEAD"
+      ? undefined
+      : request.body,
     redirect: "follow",
   });
 
@@ -144,7 +146,9 @@ async function proxyRequest(
             targetResponse = await fetch(targetUrl.toString(), {
               method: request.method,
               headers: retryHeaders,
-              body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+              body: request.method === "GET" || request.method === "HEAD"
+                ? undefined
+                : request.body,
             });
           }
         }
@@ -158,10 +162,13 @@ async function proxyRequest(
   if (isCacheable && cacheKey && targetResponse.status === 200) {
     try {
       // 克隆原始响应以用于缓存，避免 body 流被消费后无法再次读取
-      const responseToCache = new Response(targetResponse.body, targetResponse);
-      responseToCache.headers.set("Cache-Control", `public, max-age=${CACHE_TTL}`);
+      const responseToCache = targetResponse.clone(); //new Response(targetResponse.body, targetResponse);
+      responseToCache.headers.set(
+        "Cache-Control",
+        `public, max-age=${CACHE_TTL}`,
+      );
       responseToCache.headers.delete("Set-Cookie");
-      
+
       // 写入缓存
       await caches.default.put(cacheKey, responseToCache);
     } catch (cacheError) {
